@@ -11,23 +11,33 @@ const firebaseConfig = {
 };
 
 const appId = firebaseConfig.projectId;
-let userId = null;
+let userId = null; // Anonymous Firebase User ID
 let customers = [];
-let transactions = []; // All transactions fetched from the DB
-let displayedTransactions = []; // Transactions currently displayed (filtered or all)
+let transactions = []; 
+let displayedTransactions = []; 
 let db = null;
 let activeView = 'log'; 
 let transactionToDelete = null; 
-let customerToDelete = null; // ⬅️ NEW STATE for customer deletion
+let customerToDelete = null;
 
 const QUANTITY_OPTIONS = ['250 ml', '500 ml', '1 Litre', '1.5 Litres', '2 Litres', 'Other'];
 const STATUS_OPTIONS = ['Delivered', 'Not needed'];
-const getTodayDate = () => new Date().toISOString().split('T')[0];
-const TODAY = getTodayDate();
+
+// ⬇️ DATE FIX: Get TODAY's date (YYYY-MM-DD) reliably using UTC date string.
+// This simplifies the browser's date comparison, preventing the midnight cutoff error.
+function getTodayDate() {
+    const now = new Date();
+    // Use the local time zone but format it into the required YYYY-MM-DD string
+    // A simple toISOString() strip is often the issue; this method is more direct.
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 // --- DOM REFERENCES ---
 const mainContent = document.getElementById('main-content');
-const userIdDisplay = document.getElementById('user-id-display');
+const appHeader = document.getElementById('app-header'); 
 const navButtons = {
     log: document.getElementById('nav-log'),
     customers: document.getElementById('nav-customers'),
@@ -36,7 +46,6 @@ const navButtons = {
 const deleteModal = document.getElementById('delete-modal');
 const customerModal = document.getElementById('customer-modal'); 
 const deleteAllModal = document.getElementById('delete-all-modal');
-const deleteCustomerModal = document.getElementById('delete-modal'); // Reusing existing deleteModal element
 
 // --- CORE UTILITIES ---
 
@@ -76,7 +85,21 @@ function groupTransactionsByMonth(data) {
     }, {});
 }
 
-// --- DATA LISTENERS ---
+// --- USER MANAGEMENT (Simplified Single-User Header) ---
+
+function renderHeader() {
+    const currentUidDisplay = userId ? `Active User ID: ${userId.substring(0, 12)}...` : 'Authenticating...';
+    
+    appHeader.innerHTML = `
+        <h1 class="text-xl font-extrabold text-center">Varnika's Dairy Farm</h1>
+        <p class="text-sm text-center font-light">Fresh & Hygienic Milk Tracker</p>
+        <div id="user-display-container" class="text-center mt-2 opacity-90">
+            <span class="text-sm font-semibold">${currentUidDisplay}</span>
+        </div>
+    `;
+}
+
+// --- DATA LISTENERS --- 
 
 function setupCustomerListener() {
     const customerPath = getCustomerPath();
@@ -87,7 +110,8 @@ function setupCustomerListener() {
             id: doc.id,
             ...doc.data()
         }));
-        renderApp(activeView);
+        
+        renderApp(activeView); 
     }, (e) => {
         console.error("Error fetching customers:", e);
     });
@@ -96,15 +120,16 @@ function setupCustomerListener() {
 function setupDeliveryListener() {
     const deliveryPath = getDeliveryPath();
     if (!db || !deliveryPath) return;
-
+    
     db.collection(deliveryPath).orderBy('timestamp', 'desc').onSnapshot((snapshot) => {
         transactions = snapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data(),
-            date: doc.data().date, // YYYY-MM-DD
+            date: doc.data().date, 
             dateDisplay: new Date(doc.data().date || Date.now()).toLocaleDateString('en-US') 
         }));
         displayedTransactions = [...transactions]; 
+        
         renderApp(activeView);
     }, (e) => {
         console.error("Error fetching transactions:", e);
@@ -114,9 +139,10 @@ function setupDeliveryListener() {
 // --- INITIALIZATION ---
 
 function initFirebase() {
+    renderHeader(); 
+    
     if (typeof firebase === 'undefined' || !firebase.initializeApp) {
         console.error("Firebase libraries failed to load.");
-        userIdDisplay.textContent = "Error: Firebase failed to load.";
         return;
     }
 
@@ -124,35 +150,41 @@ function initFirebase() {
         const app = firebase.initializeApp(firebaseConfig, appId);
         const auth = app.auth();
         db = app.firestore();
-
+        
         auth.onAuthStateChanged((user) => {
             if (user) {
                 userId = user.uid;
-                userIdDisplay.textContent = `User ID: ${userId}`;
-                setupCustomerListener();
-                setupDeliveryListener();
-                renderApp(activeView);
+                // Log the UID for simplicity and data path integrity
+                db.collection('portalUsers').doc(userId).set({ 
+                    registeredAt: firebase.firestore.FieldValue.serverTimestamp() 
+                }, { merge: true }).then(() => {
+                    renderHeader(); 
+                    setupCustomerListener(); 
+                    setupDeliveryListener();
+                }).catch(e => console.error("Error logging UID:", e));
+
             } else {
                 auth.signInAnonymously()
                     .catch(e => {
                         console.error("Auth error:", e);
-                        userIdDisplay.textContent = "Error: Authentication failed.";
+                        renderHeader(); 
                     });
             }
         });
     } catch (e) {
         console.error("Initialization error:", e);
-        userIdDisplay.textContent = "Error: Initialization failed.";
+        renderHeader();
     }
 }
 
-// --- MODAL HANDLERS (Delete Single Transaction) ---
+
+// --- MODAL HANDLERS (Deletion and Customer Add/Delete logic) ---
 
 function closeDeleteModal() {
     deleteModal.classList.add('hidden');
     deleteModal.style.display = 'none';
     transactionToDelete = null;
-    customerToDelete = null; // Clear customer state too
+    customerToDelete = null; 
 }
 
 function openDeleteModal(id, name, isCustomer = false) {
@@ -219,7 +251,6 @@ function handleDeleteTransaction() {
         });
 }
 
-// ⬅️ NEW: Handler for deleting a customer
 function handleDeleteCustomer() {
     if (!db || !userId || !customerToDelete) return;
 
@@ -233,7 +264,6 @@ function handleDeleteCustomer() {
     db.collection(customerPath).doc(id).delete()
         .then(() => {
             closeDeleteModal();
-            // Optional: You may want to also delete related delivery records, but for simplification, we only delete the customer here.
         })
         .catch(e => {
             console.error("Error deleting customer:", e);
@@ -242,15 +272,12 @@ function handleDeleteCustomer() {
         });
 }
 
-// --- MODAL HANDLERS (Delete All History) ---
-
 function closeDeleteAllModal() {
     deleteAllModal.classList.add('hidden');
     deleteAllModal.style.display = 'none';
 }
 
 function openDeleteAllModal() {
-    // Ensure the modal backdrop is visible immediately
     deleteAllModal.style.display = 'flex';
     deleteAllModal.classList.remove('hidden');
 
@@ -273,7 +300,6 @@ function openDeleteAllModal() {
         </div>
     `;
 
-    // Attach listeners immediately after innerHTML updates
     document.getElementById('modal-close-all-btn').addEventListener('click', closeDeleteAllModal);
     document.getElementById('modal-cancel-all-btn').addEventListener('click', closeDeleteAllModal);
     document.getElementById('modal-confirm-all-btn').addEventListener('click', handleDeleteAllHistory);
@@ -426,7 +452,6 @@ function handleCustomerSelectChange(e) {
     const quantitySelect = document.getElementById('quantity');
     
     if (customer && quantitySelect) {
-        // ⬅️ FIX 1: Load preferred quantity as default when customer changes
         quantitySelect.value = customer.preferredQuantity || '500 ml';
     }
 }
@@ -442,6 +467,7 @@ function handleSaveDelivery(e) {
     const customer = customers.find(c => c.id === customerId);
     if (!customer) return alert("Please select a valid customer.");
     
+    const TODAY = getTodayDate(); // Re-fetch TODAY inside the handler to ensure accuracy
     if (selectedDate > TODAY) {
         alert("Cannot save a delivery log for a future date.");
         form.elements['delivery-date'].value = TODAY; 
@@ -520,14 +546,14 @@ function handleExportSpreadsheet() {
     link.setAttribute('href', url);
     link.setAttribute('download', `VarnikasDairyFarm_Deliveries_${getTodayDate()}.csv`); 
     document.body.appendChild(link);
-    link.click();
     document.body.removeChild(link);
 }
 
 // --- VIEW RENDERING (Template Functions) ---
 
 function renderDailyLog() {
-    // Determine the default selected customer ID and quantity
+    const TODAY_DATE = getTodayDate();
+    
     const defaultCustomerId = customers.length > 0 ? customers[0].id : '';
     const defaultQuantity = customers.length > 0 ? (customers[0].preferredQuantity || '500 ml') : '500 ml';
 
@@ -563,8 +589,8 @@ function renderDailyLog() {
                         id="delivery-date"
                         name="delivery-date"
                         type="date"
-                        value="${TODAY}"
-                        max="${TODAY}" 
+                        value="${getTodayDate()}"
+                        max="${getTodayDate()}" 
                         required
                         class="w-full rounded-lg border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 p-3 border text-lg cursor-pointer"
                     />
@@ -619,13 +645,10 @@ function renderDailyLog() {
     const deliveryForm = document.getElementById('delivery-form');
     if(deliveryForm) {
         deliveryForm.addEventListener('submit', handleSaveDelivery);
-        
-        // ⬅️ FIX 1: Attach customer change listener to update quantity
         document.getElementById('customer')?.addEventListener('change', handleCustomerSelectChange);
         
         const dateInput = document.getElementById('delivery-date');
         
-        // Calendar Click Listener (Daily Log)
         dateInput.addEventListener('click', (e) => {
              if (e.target.showPicker) {
                  e.target.showPicker();
@@ -635,9 +658,10 @@ function renderDailyLog() {
         });
 
         dateInput.addEventListener('change', (e) => {
-             if (e.target.value > TODAY) {
+            const TODAY_CHECK = getTodayDate();
+             if (e.target.value > TODAY_CHECK) {
                  alert("Delivery date cannot be more than today's date.");
-                 e.target.value = TODAY; 
+                 e.target.value = TODAY_CHECK; 
              }
         });
     }
@@ -673,18 +697,18 @@ function renderCustomerView() {
     `;
     document.getElementById('add-customer-modal-btn')?.addEventListener('click', openCustomerModal); 
     
-    // Attach delete listeners to the new buttons
     document.querySelectorAll('.delete-customer-btn').forEach(button => {
         button.addEventListener('click', (e) => {
             const id = e.currentTarget.dataset.id;
             const name = e.currentTarget.dataset.name;
-            openDeleteModal(id, name, true); // Pass true to indicate customer deletion
+            openDeleteModal(id, name, true); 
         });
     });
 }
 
 function renderHistoryView() {
-    // Group the displayed transactions by Month YYYY
+    const TODAY = getTodayDate();
+    
     const groupedTransactions = groupTransactionsByMonth(displayedTransactions);
     
     let monthFoldersHtml = Object.keys(groupedTransactions).sort((a, b) => {
@@ -745,8 +769,8 @@ function renderHistoryView() {
             <div class="bg-white p-4 rounded-xl shadow-md space-y-3">
                 <h3 class="font-bold text-gray-700">Filter History</h3>
                 <div class="grid grid-cols-2 gap-3">
-                    <input type="date" id="filter-from-date" class="filter-date-input p-2 border rounded-lg text-sm cursor-pointer" placeholder="From Date" max="${TODAY}">
-                    <input type="date" id="filter-to-date" class="filter-date-input p-2 border rounded-lg text-sm cursor-pointer" placeholder="To Date" value="${TODAY}" max="${TODAY}">
+                    <input type="date" id="filter-from-date" class="filter-date-input p-2 border rounded-lg text-sm cursor-pointer" placeholder="From Date" max="${getTodayDate()}">
+                    <input type="date" id="filter-to-date" class="filter-date-input p-2 border rounded-lg text-sm cursor-pointer" placeholder="To Date" value="${getTodayDate()}" max="${getTodayDate()}">
                 </div>
                 
                 <div class="grid grid-cols-2 gap-3">
@@ -777,18 +801,16 @@ function renderHistoryView() {
         </div>
     `;
     
-    // Attach event listeners after rendering the HTML
     document.getElementById('export-btn')?.addEventListener('click', handleExportSpreadsheet);
     document.getElementById('delete-all-btn')?.addEventListener('click', openDeleteAllModal); 
     document.getElementById('apply-filter-btn')?.addEventListener('click', applyFilter); 
     document.getElementById('reset-filter-btn')?.addEventListener('click', () => {
         displayedTransactions = [...transactions];
         document.getElementById('filter-from-date').value = '';
-        document.getElementById('filter-to-date').value = TODAY;
+        document.getElementById('filter-to-date').value = getTodayDate(); 
         renderHistoryView();
     });
     
-    // Calendar Click Listener (Filter Dates)
     document.querySelectorAll('.filter-date-input').forEach(input => {
         input.addEventListener('click', (e) => {
              if (e.target.showPicker) {
@@ -797,13 +819,20 @@ function renderHistoryView() {
                  e.target.focus();
              }
         });
+        input.addEventListener('change', (e) => {
+            const TODAY_CHECK = getTodayDate();
+             if (e.target.value > TODAY_CHECK) {
+                 alert("Delivery date cannot be more than today's date.");
+                 e.target.value = TODAY_CHECK; 
+             }
+        });
     });
 
     document.querySelectorAll('.delete-btn').forEach(button => {
         button.addEventListener('click', (e) => {
             const id = e.currentTarget.dataset.id;
             const name = e.currentTarget.dataset.name;
-            openDeleteModal(id, name, false); // Delivery Deletion
+            openDeleteModal(id, name, false);
         });
     });
 }
@@ -811,6 +840,12 @@ function renderHistoryView() {
 
 function renderApp(view) {
     activeView = view;
+    
+    if (!userId) {
+        mainContent.innerHTML = `<div class="p-4 text-center text-gray-500 mt-10">Authenticating...</div>`;
+        return;
+    }
+
     Object.values(navButtons).forEach(btn => {
         const isActive = btn.dataset.view === activeView;
         btn.className = isActive 
@@ -851,6 +886,8 @@ Object.values(navButtons).forEach(btn => {
     });
 });
 
-initFirebase();
+// 1. Initial render of the header immediately on script load
+renderHeader(); 
 
-// --- END of MilkDelivery Portal Logic ---
+// 2. Start Firebase initialization
+initFirebase();
