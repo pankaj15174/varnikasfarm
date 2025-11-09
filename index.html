@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Varnika's Dairy Farm Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+</head>
+<body>
+    <div id="app-container" class="flex justify-center min-h-screen bg-gray-100 font-sans">
+        <div class="w-full max-w-md bg-white shadow-2xl relative flex flex-col">
+            <header id="app-header" class="bg-green-700 p-4 shadow-lg text-white sticky top-0 z-10 rounded-b-xl">
+                <h1 class="text-xl font-extrabold text-center">Varnika's Dairy Farm</h1>
+                <p class="text-sm text-center font-light">Fresh & Hygienic Milk Tracker</p>
+                <p id="user-id-display" class="text-xs text-center mt-2 opacity-70">User ID: Loading...</p>
+            </header>
+
+            <main id="main-content" class="flex-grow overflow-y-auto">
+                </main>
+
+            <nav id="app-nav" class="flex justify-around bg-white border-t border-gray-200 p-2 sticky bottom-0 z-10">
+                <button id="nav-log" class="flex flex-col items-center p-2 rounded-xl text-green-600 font-semibold" data-view="log">
+                    <span class="text-xl">🚚</span><span class="text-xs">Delivery Log</span>
+                </button>
+                <button id="nav-customers" class="flex flex-col items-center p-2 rounded-xl text-gray-500 hover:text-green-600" data-view="customers">
+                    <span class="text-xl">👥</span><span class="text-xs">Customers</span>
+                </button>
+                <button id="nav-history" class="flex flex-col items-center p-2 rounded-xl text-gray-500 hover:text-green-600" data-view="export">
+                    <span class="text-xl">📄</span><span class="text-xs">History</span>
+                </button>
+            </nav>
+        </div>
+    </div>
+    
+    <div id="loading-screen" class="hidden"></div> 
+    <div id="error-screen" class="hidden"></div> 
+
+    <div id="customer-modal" class="hidden fixed inset-0 z-50 bg-gray-900 bg-opacity-75 items-center justify-center p-4"></div>
+    <div id="delete-modal" class="hidden fixed inset-0 z-50 bg-gray-900 bg-opacity-75 items-center justify-center p-4"></div>
+    <div id="delete-all-modal" class="hidden fixed inset-0 z-50 bg-gray-900 bg-opacity-75 items-center justify-center p-4"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+/* Custom styles for mobile appearance */
+body {
+    font-family: 'Inter', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f3f4f6;
+    /* Key CSS to enable safe area environment variables (keeping the original mobile feel) */
+    padding-top: constant(safe-area-inset-top);
+    padding-bottom: constant(safe-area-inset-bottom);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Ensure the main container takes the full viewport height */
+#app-container {
+    min-height: 100vh;
+}
