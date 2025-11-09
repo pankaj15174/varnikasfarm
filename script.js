@@ -12,6 +12,7 @@ const firebaseConfig = {
 
 const appId = firebaseConfig.projectId;
 let userId = null; // Anonymous Firebase User ID
+let registeredUids = []; // Array to hold UIDs of all known users
 let customers = [];
 let transactions = []; 
 let displayedTransactions = []; 
@@ -23,15 +24,16 @@ let customerToDelete = null;
 const QUANTITY_OPTIONS = ['250 ml', '500 ml', '1 Litre', '1.5 Litres', '2 Litres', 'Other'];
 const STATUS_OPTIONS = ['Delivered', 'Not needed'];
 
-// ⬇️ DATE FIX: Get TODAY's date (YYYY-MM-DD) reliably using UTC date string.
-// This simplifies the browser's date comparison, preventing the midnight cutoff error.
+// DATE FIX: Get TODAY's date (YYYY-MM-DD) reliably using the IST context
 function getTodayDate() {
     const now = new Date();
-    // Use the local time zone but format it into the required YYYY-MM-DD string
-    // A simple toISOString() strip is often the issue; this method is more direct.
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istTime = new Date(utcTime + istOffset);
+    
+    const year = istTime.getFullYear();
+    const month = String(istTime.getMonth() + 1).padStart(2, '0');
+    const day = String(istTime.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 }
 
@@ -85,19 +87,69 @@ function groupTransactionsByMonth(data) {
     }, {});
 }
 
-// --- USER MANAGEMENT (Simplified Single-User Header) ---
+// --- USER MANAGEMENT (UID SWITCHING) ---
+
+function setupUidListener() {
+    if (!db) return;
+    
+    // Listen to the portalUsers collection to get a list of all UIDs that have logged in
+    db.collection('portalUsers').onSnapshot((snapshot) => {
+        registeredUids = snapshot.docs.map(doc => doc.id);
+
+        renderHeader();
+        
+        // Setup data listeners for the currently active UID
+        setupCustomerListener(); 
+        setupDeliveryListener();
+        
+        // Initial render of the main application content
+        renderApp(activeView); 
+    }, (e) => {
+        console.error("Error fetching registered UIDs:", e);
+    });
+}
 
 function renderHeader() {
-    const currentUidDisplay = userId ? `Active User ID: ${userId.substring(0, 12)}...` : 'Authenticating...';
+    const currentUidDisplay = userId ? `Active: ${userId.substring(0, 8)}...` : 'Authenticating...';
     
+    // Create dropdown options for all known UIDs
+    let uidOptions = registeredUids.map(uid => 
+        `<option value="${uid}" ${uid === userId ? 'selected' : ''}>User: ${uid.substring(0, 8)}...</option>`
+    ).join('');
+    
+    // Ensure the current user's UID is included if the list is empty or slow to update
+    if (userId && !registeredUids.includes(userId)) {
+         uidOptions = `<option value="${userId}" selected>${currentUidDisplay}</option>` + uidOptions;
+    }
+
+
     appHeader.innerHTML = `
         <h1 class="text-xl font-extrabold text-center">Varnika's Dairy Farm</h1>
-        <p class="text-sm text-center font-light">Fresh & Hygienic Milk Tracker</p>
+        <p class="text-sm text-center font-light">Fresh & Hygienic Milk Tracker (IST)</p>
         <div id="user-display-container" class="text-center mt-2 opacity-90">
-            <span class="text-sm font-semibold">${currentUidDisplay}</span>
+            <select id="user-uid-dropdown" class="bg-green-600 text-white px-3 py-1 rounded-lg text-sm font-semibold hover:bg-green-500 transition duration-150">
+                <option value="" disabled>Select User (UID)</option>
+                ${uidOptions}
+            </select>
         </div>
     `;
+    
+    document.getElementById('user-uid-dropdown')?.addEventListener('change', handleUidSwitch);
 }
+
+function handleUidSwitch(e) {
+    const newUid = e.target.value;
+    if (newUid && newUid !== userId) {
+        userId = newUid;
+        
+        // Re-setup listeners with the new UID
+        setupCustomerListener();
+        setupDeliveryListener();
+        renderHeader(); // Update selected option
+        renderApp(activeView); // Force view refresh
+    }
+}
+
 
 // --- DATA LISTENERS --- 
 
@@ -154,13 +206,12 @@ function initFirebase() {
         auth.onAuthStateChanged((user) => {
             if (user) {
                 userId = user.uid;
-                // Log the UID for simplicity and data path integrity
+                
+                // CRUCIAL: Register the UID
                 db.collection('portalUsers').doc(userId).set({ 
                     registeredAt: firebase.firestore.FieldValue.serverTimestamp() 
                 }, { merge: true }).then(() => {
-                    renderHeader(); 
-                    setupCustomerListener(); 
-                    setupDeliveryListener();
+                    setupUidListener();
                 }).catch(e => console.error("Error logging UID:", e));
 
             } else {
@@ -546,6 +597,7 @@ function handleExportSpreadsheet() {
     link.setAttribute('href', url);
     link.setAttribute('download', `VarnikasDairyFarm_Deliveries_${getTodayDate()}.csv`); 
     document.body.appendChild(link);
+    link.click();
     document.body.removeChild(link);
 }
 
@@ -801,6 +853,7 @@ function renderHistoryView() {
         </div>
     `;
     
+    // ⬇️ FIX: Attach export button listener
     document.getElementById('export-btn')?.addEventListener('click', handleExportSpreadsheet);
     document.getElementById('delete-all-btn')?.addEventListener('click', openDeleteAllModal); 
     document.getElementById('apply-filter-btn')?.addEventListener('click', applyFilter); 
