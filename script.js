@@ -2,17 +2,18 @@
 
 // --- CONFIGURATION & GLOBAL STATE ---
 const firebaseConfig = {
-  apiKey: "AIzaSyB50H4ChFhcbxURE1aTr0WNKZaNMnVDNmE",
-  authDomain: "varnikasdairyfarm.firebaseapp.com",
-  projectId: "varnikasdairyfarm",
-  storageBucket: "varnikasdairyfarm.firebasestorage.app",
-  messagingSenderId: "702396701165",
-  appId: "1:702396701165:web:484bd8432a8d3f0694afe4"
+    apiKey: "AIzaSyB50H4ChFhcbxURE1aTr0WNKZaNMnVDNmE",
+    authDomain: "varnikasdairyfarm.firebaseapp.com",
+    projectId: "varnikasdairyfarm",
+    storageBucket: "varnikasdairyfarm.firebasestorage.app",
+    messagingSenderId: "702396701165",
+    appId: "1:702396701165:web:484bd8432a8d3f0694afe4"
 };
 
 const appId = firebaseConfig.projectId;
 let userId = null; // Anonymous Firebase User ID
-let registeredUids = []; // Array to hold UIDs of all known users
+// UPDATED: Now holds objects { uid, name }
+let registeredUids = []; // Array to hold UIDs and Names of all known users 
 let customers = [];
 let transactions = []; 
 let displayedTransactions = []; 
@@ -20,6 +21,7 @@ let db = null;
 let activeView = 'log'; 
 let transactionToDelete = null; 
 let customerToDelete = null;
+let currentUserName = "Authenticating..."; // NEW: To hold the currently active user's name
 
 const QUANTITY_OPTIONS = ['250 ml', '500 ml', '1 Litre', '1.5 Litres', '2 Litres', 'Other'];
 const STATUS_OPTIONS = ['Delivered', 'Not needed'];
@@ -52,11 +54,19 @@ const deleteAllModal = document.getElementById('delete-all-modal');
 // --- CORE UTILITIES ---
 
 function getCustomerPath() {
-    return userId ? `artifacts/${appId}/users/${userId}/customers` : null;
+    // IMPORTANT: Customers collection is NOT tied to userId. All users share the same customer list.
+    return userId ? `artifacts/${appId}/customers` : null; 
 }
 
 function getDeliveryPath() {
+    // Delivery collection IS tied to userId. Each user has their own delivery log.
     return userId ? `artifacts/${appId}/users/${userId}/deliveries` : null;
+}
+
+// NEW: Function to get the User's name by UID
+function getUserName(uid) {
+    const user = registeredUids.find(u => u.uid === uid);
+    return user ? user.name : `User: ${uid.substring(0, 8)}...`;
 }
 
 function getQuantityInML(quantityStr) {
@@ -92,9 +102,15 @@ function groupTransactionsByMonth(data) {
 function setupUidListener() {
     if (!db) return;
     
-    // Listen to the portalUsers collection to get a list of all UIDs that have logged in
+    // Listen to the portalUsers collection to get a list of all UIDs that have logged in, along with their names
     db.collection('portalUsers').onSnapshot((snapshot) => {
-        registeredUids = snapshot.docs.map(doc => doc.id);
+        registeredUids = snapshot.docs.map(doc => ({
+            uid: doc.id,
+            name: doc.data().name || `User: ${doc.id.substring(0, 8)}...`
+        }));
+        
+        // Update the current user's name
+        currentUserName = getUserName(userId);
 
         renderHeader();
         
@@ -110,25 +126,26 @@ function setupUidListener() {
 }
 
 function renderHeader() {
-    const currentUidDisplay = userId ? `Active: ${userId.substring(0, 8)}...` : 'Authenticating...';
+    // The name to display in the header (e.g., "Welcome, John")
+    const headerNameDisplay = currentUserName.includes('User:') ? currentUserName : `Welcome, ${currentUserName}`;
     
-    // Create dropdown options for all known UIDs
-    let uidOptions = registeredUids.map(uid => 
-        `<option value="${uid}" ${uid === userId ? 'selected' : ''}>User: ${uid.substring(0, 8)}...</option>`
+    // Create dropdown options for all known UIDs/Names
+    let uidOptions = registeredUids.map(user => 
+        `<option value="${user.uid}" ${user.uid === userId ? 'selected' : ''}>${user.name}</option>`
     ).join('');
     
-    // Ensure the current user's UID is included if the list is empty or slow to update
-    if (userId && !registeredUids.includes(userId)) {
-         uidOptions = `<option value="${userId}" selected>${currentUidDisplay}</option>` + uidOptions;
+    // Fallback: Ensure the current user's UID/Name is included if the list is empty or slow to update
+    if (userId && !registeredUids.find(u => u.uid === userId)) {
+         uidOptions = `<option value="${userId}" selected>${currentUserName}</option>` + uidOptions;
     }
 
 
     appHeader.innerHTML = `
         <h1 class="text-xl font-extrabold text-center">Varnika's Dairy Farm</h1>
-        <p class="text-sm text-center font-light">Fresh & Hygienic Milk Tracker (IST)</p>
+        <p class="text-sm text-center font-light">${headerNameDisplay} | Fresh Milk Tracker (IST)</p>
         <div id="user-display-container" class="text-center mt-2 opacity-90">
             <select id="user-uid-dropdown" class="bg-green-600 text-white px-3 py-1 rounded-lg text-sm font-semibold hover:bg-green-500 transition duration-150">
-                <option value="" disabled>Select User (UID)</option>
+                <option value="" disabled>Select User (Name)</option>
                 ${uidOptions}
             </select>
         </div>
@@ -141,21 +158,94 @@ function handleUidSwitch(e) {
     const newUid = e.target.value;
     if (newUid && newUid !== userId) {
         userId = newUid;
+        currentUserName = getUserName(newUid); // Set the new user's name
         
         // Re-setup listeners with the new UID
-        setupCustomerListener();
+        setupCustomerListener(); // Note: Customer listener is now shared, but we call it for consistency
         setupDeliveryListener();
-        renderHeader(); // Update selected option
+        renderHeader(); // Update selected option and header name
         renderApp(activeView); // Force view refresh
     }
 }
 
+// NEW: Function to ask the user for their name
+function askForUserName() {
+    customerModal.innerHTML = `
+        <div class="bg-white rounded-xl w-full max-w-sm shadow-2xl p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold text-green-700">Set Your User Name</h3>
+            </div>
+            <p class="text-gray-700 mb-4">Please enter your name to personalize your portal experience and distinguish your deliveries.</p>
+            <form id="set-name-form" class="space-y-4">
+                <div>
+                    <label htmlFor="user-name-input" class="block text-sm font-medium text-gray-700">Your Name</label>
+                    <input
+                        id="user-name-input"
+                        name="user-name-input"
+                        type="text"
+                        placeholder="e.g., John or Assistant"
+                        required
+                        class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 p-2 border"
+                    />
+                </div>
+                <button
+                    type="submit"
+                    id="set-name-submit-btn"
+                    class="w-full bg-green-600 text-white py-2 px-4 rounded-xl font-semibold shadow-md hover:bg-green-700 transition duration-150"
+                >
+                    Save Name
+                </button>
+            </form>
+        </div>
+    `;
+
+    customerModal.style.display = 'flex';
+    customerModal.classList.remove('hidden');
+    
+    document.getElementById('user-name-input').focus(); 
+
+    document.getElementById('set-name-form').addEventListener('submit', handleSetName);
+}
+
+// NEW: Handler for saving the user's name
+function handleSetName(e) {
+    e.preventDefault();
+    const form = e.target;
+    const name = form.elements['user-name-input'].value.trim();
+    const submitBtn = document.getElementById('set-name-submit-btn');
+
+    if (!db || !userId || !name) return;
+    if (name.length < 2) return alert("Please enter a name of at least 2 characters.");
+
+    submitBtn.textContent = 'Saving...';
+    submitBtn.disabled = true;
+
+    // Update the portalUsers document with the user's name
+    db.collection('portalUsers').doc(userId).set({ 
+        name: name,
+        registeredAt: firebase.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true })
+    .then(() => {
+        currentUserName = name; // Update local state
+        closeCustomerModal(); // Close the name setting modal (reusing customerModal)
+        setupUidListener(); // Re-run listener to update the registeredUids list and header
+    })
+    .catch(e => {
+        console.error("Error setting user name:", e);
+        alert("Failed to set user name.");
+        submitBtn.textContent = 'Save Name';
+        submitBtn.disabled = false;
+    });
+}
 
 // --- DATA LISTENERS --- 
 
 function setupCustomerListener() {
     const customerPath = getCustomerPath();
-    if (!db || !customerPath) return;
+    if (!db || !customerPath) {
+        console.warn("Customer Listener skipped: DB or path is null.");
+        return;
+    }
 
     db.collection(customerPath).onSnapshot((snapshot) => {
         customers = snapshot.docs.map(doc => ({
@@ -163,9 +253,22 @@ function setupCustomerListener() {
             ...doc.data()
         }));
         
+        console.log(`[Customer Data]: Fetched ${customers.length} customers from path: ${customerPath}`);
+        
+        // Check if we are stuck in the name-setting phase and prevent rerender
+        if (customerModal.style.display === 'flex' && !document.getElementById('add-customer-form')) {
+             return; 
+        }
+
         renderApp(activeView); 
     }, (e) => {
-        console.error("Error fetching customers:", e);
+        // --- CRITICAL ERROR LOGGING ---
+        console.error("--- ERROR FETCHING CUSTOMERS ---");
+        console.error("Path attempted:", customerPath);
+        console.error("Firebase Error Code:", e.code);
+        console.error("Firebase Error Message:", e.message);
+        console.error("----------------------------------");
+        // ------------------------------------
     });
 }
 
@@ -173,6 +276,7 @@ function setupDeliveryListener() {
     const deliveryPath = getDeliveryPath();
     if (!db || !deliveryPath) return;
     
+    // UPDATED: Use the current userId's path for deliveries
     db.collection(deliveryPath).orderBy('timestamp', 'desc').onSnapshot((snapshot) => {
         transactions = snapshot.docs.map(doc => ({
             id: doc.id,
@@ -207,12 +311,29 @@ function initFirebase() {
             if (user) {
                 userId = user.uid;
                 
-                // CRUCIAL: Register the UID
-                db.collection('portalUsers').doc(userId).set({ 
-                    registeredAt: firebase.firestore.FieldValue.serverTimestamp() 
-                }, { merge: true }).then(() => {
-                    setupUidListener();
-                }).catch(e => console.error("Error logging UID:", e));
+                // CRUCIAL: Check if user name is set
+                db.collection('portalUsers').doc(userId).get()
+                    .then(doc => {
+                        if (doc.exists && doc.data().name) {
+                            // User is registered and has a name
+                            currentUserName = doc.data().name;
+                            setupUidListener();
+                        } else {
+                            // New user OR existing user without a name
+                            db.collection('portalUsers').doc(userId).set({ 
+                                registeredAt: firebase.firestore.FieldValue.serverTimestamp() 
+                            }, { merge: true }).then(() => {
+                                // Now ask for the name
+                                askForUserName(); 
+                                // Setup the main listener, which will update once the name is set
+                                setupUidListener(); 
+                            });
+                        }
+                    })
+                    .catch(e => {
+                        console.error("Error logging UID/fetching name:", e);
+                        setupUidListener();
+                    });
 
             } else {
                 auth.signInAnonymously()
@@ -311,7 +432,8 @@ function handleDeleteCustomer() {
     confirmButton.textContent = 'Deleting...';
     confirmButton.disabled = true;
 
-    const customerPath = getCustomerPath();
+    // UPDATED: Customer path is now shared
+    const customerPath = getCustomerPath(); 
     db.collection(customerPath).doc(id).delete()
         .then(() => {
             closeDeleteModal();
@@ -339,9 +461,9 @@ function openDeleteAllModal() {
                 <h3 class="text-xl font-bold text-red-700">⚠️ Confirm Delete All History</h3>
                 <button id="modal-close-all-btn" class="text-gray-400 hover:text-gray-600">❌</button>
             </div>
-            <p class="text-gray-700 mb-6 font-semibold text-lg">Are you absolutely sure you want to permanently delete ALL (${transactions.length}) delivery records? This cannot be undone.</p>
+            <p class="text-gray-700 mb-6 font-semibold text-lg">Are you absolutely sure you want to permanently delete ALL (${transactions.length}) delivery records for <b class="text-red-700">${currentUserName}</b>? This cannot be undone.</p>
             <div class="flex justify-end space-x-3">
-                <button id="modal-cancel-all-btn" class="bg-gray-200 text-gray-800 py-2 px-4 rounded-xl font-semibold hover:bg-gray-300 transition duration-150">
+                <button id="modal-cancel-all-btn" class="bg-gray-200 text-gray-800 py-2 px-4 rounded-xl font-semibold hover:bg-gray-400 transition duration-150">
                     Cancel
                 </button>
                 <button id="modal-confirm-all-btn" class="bg-red-600 text-white py-2 px-4 rounded-xl font-semibold shadow-md hover:bg-red-700 transition duration-150">
@@ -371,6 +493,7 @@ function handleDeleteAllHistory() {
     const deliveryPath = getDeliveryPath();
     const batchSize = 500; 
     
+    // Note: We only delete the records for the currently active user (userId)
     db.collection(deliveryPath).get()
         .then(snapshot => {
             const batches = [];
@@ -392,7 +515,7 @@ function handleDeleteAllHistory() {
             displayedTransactions = [];
             renderApp(activeView); 
 
-            alert(`Successfully deleted all ${totalRecords} history records.`);
+            alert(`Successfully deleted all ${totalRecords} history records for ${currentUserName}.`);
             closeDeleteAllModal();
         })
         .catch(e => {
@@ -408,6 +531,8 @@ function handleDeleteAllHistory() {
 function closeCustomerModal() {
     customerModal.classList.add('hidden');
     customerModal.style.display = 'none';
+    // Remove all event listeners for the set-name form if present, to clean up after its use
+    document.getElementById('set-name-form')?.removeEventListener('submit', handleSetName);
 }
 
 function openCustomerModal() {
@@ -477,9 +602,12 @@ function handleAddCustomer(e) {
         name: name,
         preferredQuantity: preferredQuantity,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        // NEW: Log who created the customer for transparency, though customers are shared.
+        createdByUid: userId, 
+        createdByName: currentUserName,
     };
 
-    const customerPath = getCustomerPath();
+    const customerPath = getCustomerPath(); // Shared collection
     db.collection(customerPath).add(newCustomer)
         .then(() => {
             submitBtn.textContent = '➕ Add Customer';
@@ -533,12 +661,15 @@ function handleSaveDelivery(e) {
         quantity: deliveryStatus === 'Delivered' ? selectedQuantity : '0 ml',
         actualQuantity: selectedQuantity,
         status: deliveryStatus,
+        // NEW: Add the logger's UID and Name for transparency
+        loggerUid: userId,
+        loggerName: currentUserName,
     };
 
-    const deliveryPath = getDeliveryPath();
+    const deliveryPath = getDeliveryPath(); // User-specific collection
     db.collection(deliveryPath).add(deliveryRecord)
         .then(() => {
-            alert("Delivery saved successfully!");
+            alert(`Delivery saved successfully by ${currentUserName}!`);
             form.elements['delivery-date'].value = TODAY; 
             form.elements['status'].value = 'Delivered';
         })
@@ -574,7 +705,7 @@ function handleExportSpreadsheet() {
         return alert("No data to export!");
     }
 
-    const headers = ["Date", "Customer Name", "Quantity Delivered (ml)", "Status", "Preferred Quantity"];
+    const headers = ["Date", "Customer Name", "Quantity Delivered (ml)", "Status", "Preferred Quantity", "Logged By"]; // UPDATED header
     const csvContent = [headers.join(',')];
 
     dataToExport.forEach(t => {
@@ -586,6 +717,7 @@ function handleExportSpreadsheet() {
             quantityValueInML, 
             t.status,
             t.actualQuantity,
+            t.loggerName || 'N/A', // UPDATED: Include logger name
         ];
         csvContent.push(row.map(item => `"${item}"`).join(','));
     });
@@ -595,7 +727,7 @@ function handleExportSpreadsheet() {
 
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `VarnikasDairyFarm_Deliveries_${getTodayDate()}.csv`); 
+    link.setAttribute('download', `VarnikasDairyFarm_Deliveries_${currentUserName}_${getTodayDate()}.csv`); // UPDATED: Include user name in file name
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -620,20 +752,20 @@ function renderDailyLog() {
     let statusOptions = STATUS_OPTIONS.map(opt => `<option value="${opt}">${opt}</option>`).join('');
 
     if (customers.length === 0) {
-         mainContent.innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg border border-yellow-300 text-center space-y-3">
+        // ... (No change in the 'No Customers' block)
+        mainContent.innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg border border-yellow-300 text-center space-y-3">
              <p class="font-semibold mb-2">No Customers Found</p>
              <button id="add-customer-btn" class="w-full bg-blue-600 text-white py-2 px-4 rounded-xl font-semibold hover:bg-blue-700 transition duration-150">
                  <span class="text-xl">➕</span> Add Customer Now
              </button>
-         </div>`;
-         document.getElementById('add-customer-btn')?.addEventListener('click', openCustomerModal); 
-         return;
+           </div>`;
+        document.getElementById('add-customer-btn')?.addEventListener('click', openCustomerModal); 
+        return;
     }
 
     mainContent.innerHTML = `
         <div class="p-4 space-y-6">
-            <h2 class="text-2xl font-bold text-gray-800">Daily Milk Delivery Log</h2>
-            <form id="delivery-form" class="bg-white p-5 rounded-xl shadow-lg space-y-4">
+            <h2 class="text-2xl font-bold text-gray-800">Daily Milk Delivery Log (${currentUserName})</h2> <form id="delivery-form" class="bg-white p-5 rounded-xl shadow-lg space-y-4">
                 
                 <div>
                     <label htmlFor="delivery-date" class="block text-sm font-semibold text-gray-700 mb-1">Select Delivery Date</label>
@@ -727,7 +859,7 @@ function renderCustomerView() {
                 <div>
                     <p class="font-bold text-lg text-gray-800">${c.name}</p>
                     <p class="text-sm text-gray-500">Pref. Qty: <span class="font-medium text-green-600">${c.preferredQuantity}</span></p>
-                </div>
+                    <p class="text-xs text-gray-400">Added by: ${c.createdByName || 'Unknown'}</p> </div>
                 <button class="delete-customer-btn text-red-500 p-1 rounded-full hover:bg-red-100 transition duration-150" aria-label="Delete customer" data-id="${c.id}" data-name="${c.name}">
                     <span class="text-xl">❌</span>
                 </button>
@@ -773,12 +905,15 @@ function renderHistoryView() {
         let transactionListHtml = monthTransactions.map(t => {
             const color = t.status === 'Delivered' ? '#10B981' : '#F59E0B';
             const statusClass = t.status === 'Delivered' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+            const loggerInfo = t.loggerName ? `<span class="text-xs text-gray-400 block mt-1">Logged by: ${t.loggerName}</span>` : ''; // NEW: Show logger name
+            
             return `
                 <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 flex justify-between items-center mt-2 ml-4" style="border-color: ${color};">
                     <div>
                         <p class="text-xs text-gray-500">${t.dateDisplay}</p>
                         <p class="font-bold text-lg text-gray-800">${t.customerName}</p>
                         <p class="text-sm text-gray-600">Qty: <span class="font-bold">${t.quantity}</span></p>
+                        ${loggerInfo}
                     </div>
                     <div class="flex items-center space-x-3">
                         <span class="px-2 py-1 text-xs font-semibold rounded-full ${statusClass}">
@@ -806,17 +941,16 @@ function renderHistoryView() {
     }).join('');
 
     if (transactions.length === 0) {
-        monthFoldersHtml = `<p class="text-center text-gray-500 p-4">No deliveries have been logged yet.</p>`;
+        monthFoldersHtml = `<p class="text-center text-gray-500 p-4">No deliveries have been logged yet for ${currentUserName}.</p>`; // UPDATED: Contextual message
     } else if (displayedTransactions.length === 0) {
-        monthFoldersHtml = `<p class="text-center text-gray-500 p-4">No deliveries found for the selected filter period.</p>`;
+        monthFoldersHtml = `<p class="text-center text-gray-500 p-4">No deliveries found for the selected filter period for ${currentUserName}.</p>`; // UPDATED: Contextual message
     }
 
 
     mainContent.innerHTML = `
         <div class="p-4 space-y-6">
             <div class="flex justify-between items-center">
-                <h2 class="text-2xl font-bold text-gray-800">Delivery History (${displayedTransactions.length})</h2>
-            </div>
+                <h2 class="text-2xl font-bold text-gray-800">Delivery History - ${currentUserName} (${displayedTransactions.length})</h2> </div>
             
             <div class="bg-white p-4 rounded-xl shadow-md space-y-3">
                 <h3 class="font-bold text-gray-700">Filter History</h3>
@@ -839,7 +973,7 @@ function renderHistoryView() {
                     <span class="text-xl mr-1">📄</span> Export CSV
                 </button>
                 <button id="delete-all-btn" class="flex items-center bg-red-600 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md hover:bg-red-700 transition duration-150" ${transactions.length === 0 ? 'disabled' : ''}>
-                    <span class="text-xl mr-1">🗑️</span> Delete All
+                    <span class="text-xl mr-1">🗑️</span> Delete All My Logs
                 </button>
             </div>
             
@@ -897,6 +1031,11 @@ function renderApp(view) {
     if (!userId) {
         mainContent.innerHTML = `<div class="p-4 text-center text-gray-500 mt-10">Authenticating...</div>`;
         return;
+    }
+    
+    // Don't render if the name modal is open for a new user
+    if (customerModal.style.display === 'flex' && !document.getElementById('add-customer-form')) {
+        return; 
     }
 
     Object.values(navButtons).forEach(btn => {
