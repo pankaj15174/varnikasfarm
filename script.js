@@ -733,6 +733,89 @@ function handleExportSpreadsheet() {
     document.body.removeChild(link);
 }
 
+/**
+ * EXPORT ALL USERS' DATA
+ * - Reads portalUsers collection to get every UID
+ * - For each UID, reads artifact/{appId}/users/{uid}/deliveries
+ * - Builds a single CSV containing all users' deliveries
+ *
+ * NOTE: This operation requires read access to each user's deliveries collection.
+ */
+async function handleExportAllUsers() {
+    if (!db) return alert("Database not initialized.");
+
+    try {
+        // Fetch all registered users
+        const usersSnapshot = await db.collection('portalUsers').get();
+        if (usersSnapshot.empty) {
+            return alert("No registered users found.");
+        }
+
+        const allData = []; // will hold rows
+
+        for (let userDoc of usersSnapshot.docs) {
+            const uid = userDoc.id;
+            const userName = userDoc.data().name || uid.substring(0, 6);
+
+            const deliveryPath = `artifacts/${appId}/users/${uid}/deliveries`;
+            // Read deliveries for this user
+            const deliveriesSnapshot = await db.collection(deliveryPath).orderBy('timestamp', 'desc').get();
+
+            deliveriesSnapshot.forEach(doc => {
+                const t = doc.data();
+                allData.push({
+                    uid,
+                    userName,
+                    date: t.date || '',
+                    dateDisplay: new Date(t.date || Date.now()).toLocaleDateString('en-US'),
+                    customerName: t.customerName || '',
+                    quantityMl: getQuantityInML(t.quantity || '0 ml'),
+                    status: t.status || '',
+                    preferred: t.actualQuantity || '',
+                    loggerName: t.loggerName || userName
+                });
+            });
+        }
+
+        if (allData.length === 0) {
+            return alert("No delivery data found for any user.");
+        }
+
+        // Build CSV
+        const headers = [
+            "UID", "User Name", "Date", "Customer Name",
+            "Quantity Delivered (ml)", "Status", "Preferred Qty", "Logger Name"
+        ];
+        const csvRows = [headers.join(',')];
+
+        allData.forEach(r => {
+            csvRows.push([
+                r.uid,
+                r.userName,
+                r.dateDisplay,
+                r.customerName,
+                r.quantityMl,
+                r.status,
+                r.preferred,
+                r.loggerName
+            ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        });
+
+        const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `VarnikasDairyFarm_ALL_USERS_${getTodayDate()}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    } catch (e) {
+        console.error("Error exporting all users:", e);
+        alert("Failed to export all users. Check console for details and verify Firestore security rules allow cross-user reads.");
+    }
+}
+
 // --- VIEW RENDERING (Template Functions) ---
 
 function renderDailyLog() {
@@ -968,10 +1051,17 @@ function renderHistoryView() {
                     </button>
                 </div>
             </div>
+
+            <!-- Option A layout: three buttons side-by-side -->
             <div class="flex justify-between items-center">
                 <button id="export-btn" class="flex items-center bg-green-600 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md hover:bg-green-700 transition duration-150" ${displayedTransactions.length === 0 ? 'disabled' : ''}>
-                    <span class="text-xl mr-1">📄</span> Export CSV
+                    <span class="text-xl mr-1">📄</span> Export My CSV
                 </button>
+
+                <button id="export-all-btn" class="flex items-center bg-purple-600 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md hover:bg-purple-700 transition duration-150">
+                    <span class="text-xl mr-1">🌍</span> Export All
+                </button>
+
                 <button id="delete-all-btn" class="flex items-center bg-red-600 text-white px-3 py-2 rounded-xl text-sm font-semibold shadow-md hover:bg-red-700 transition duration-150" ${transactions.length === 0 ? 'disabled' : ''}>
                     <span class="text-xl mr-1">🗑️</span> Delete All My Logs
                 </button>
@@ -989,6 +1079,7 @@ function renderHistoryView() {
     
     // ⬇️ FIX: Attach export button listener
     document.getElementById('export-btn')?.addEventListener('click', handleExportSpreadsheet);
+    document.getElementById('export-all-btn')?.addEventListener('click', handleExportAllUsers);
     document.getElementById('delete-all-btn')?.addEventListener('click', openDeleteAllModal); 
     document.getElementById('apply-filter-btn')?.addEventListener('click', applyFilter); 
     document.getElementById('reset-filter-btn')?.addEventListener('click', () => {
